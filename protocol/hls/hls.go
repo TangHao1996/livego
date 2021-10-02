@@ -67,6 +67,8 @@ func (server *Server) GetWriter(info av.Info) av.WriteCloser {
 	} else {
 		s = v.(*Source)
 	}
+
+	//TODO return fmp4 source
 	return s
 }
 

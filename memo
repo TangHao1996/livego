@@ -1,0 +1,3 @@
+1.写好fmp4Source.parse中对当前packet的处理
+    hedaer，关键帧，普通帧
+2. 按fmp4模块写cut的条件
