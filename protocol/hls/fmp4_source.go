@@ -33,9 +33,21 @@ type Fmp4Source struct {
 	bwriter     *bytes.Buffer
 	btswriter   *bytes.Buffer
 	cache       FragmentCache
-	parser      *parser.CodecParser
+	codecParser *parser.CodecParser
+	pts, dts    uint64
+	stat        *fmp4Status
 	closed      bool
 	packetQueue chan *av.Packet
+}
+
+type fmp4Status struct {
+	id             int64
+	firstTimestamp int64
+	lastTimestamp  int64
+}
+
+type fmp4Track struct {
+	data []byte
 }
 
 func NewFmp4Source() *Fmp4Source {
@@ -44,7 +56,8 @@ func NewFmp4Source() *Fmp4Source {
 		muxer:       fmp4.NewMuxer(),
 		bwriter:     bytes.NewBuffer(make([]byte, 100*1024)),
 		cache:       *NewFragmentCache(),
-		parser:      parser.NewCodecParser(),
+		codecParser: parser.NewCodecParser(),
+		stat:        &fmp4Status{},
 		closed:      false,
 		packetQueue: make(chan *av.Packet),
 	}
@@ -83,16 +96,33 @@ func (source *Fmp4Source) SendPacket() error {
 					return err
 				}
 			}
+			// get media data to be added, decide whether cut previous data
+			_, isSeq, err := source.parse(p)
+			if err != nil {
+				log.Warning(err)
+			}
+			if err != nil || isSeq {
+				continue
+			}
+			if source.btswriter != nil {
+				// source.stat.update(p.IsVideo, p.TimeStamp)
+				// source.calcPtsDts(p.IsVideo, p.TimeStamp, uint32(compositionTime))
+				// source.tsMux(p)
+				source.stat.lastTimestamp = int64(p.TimeStamp) //for calculating last sample duration
+				source.fmp4Mux(p)                              // add media data into btswriter
+			}
 
+		} else {
+			return fmt.Errorf("packet queue closed")
 		}
 	}
 
 	return nil
 }
 
-//到这里rtmp的header已经解析好，packet.data中可能有
+//到这里rtmp header(flv tag header)，flv tag已经解析好，packet.data中可能有
 //1.264的nalu 2.aac数据 3.264的sequence
-//要做的：对当前帧的判断，对之前数据的切片
+//todo：将nalu写进p.Data便于后续写入mdat, 根据当前帧判断cut
 func (source *Fmp4Source) parse(p *av.Packet) (cts int32, isSeq bool, err error) {
 	var compositionTime int32
 	var ah av.AudioPacketHeader
@@ -104,7 +134,7 @@ func (source *Fmp4Source) parse(p *av.Packet) (cts int32, isSeq bool, err error)
 		}
 		compositionTime = vh.CompositionTime()
 		if vh.IsKeyFrame() && vh.IsSeq() {
-			return compositionTime, true, source.tsparser.Parse(p, source.bwriter)
+			return compositionTime, true, source.codecParser.Parse(p, source.bwriter)
 		}
 	} else {
 		ah = p.Header.(av.AudioPacketHeader)
@@ -112,11 +142,12 @@ func (source *Fmp4Source) parse(p *av.Packet) (cts int32, isSeq bool, err error)
 			return compositionTime, false, ErrNoSupportAudioCodec
 		}
 		if ah.AACPacketType() == av.AAC_SEQHDR {
-			return compositionTime, true, source.tsparser.Parse(p, source.bwriter)
+			return compositionTime, true, source.codecParser.Parse(p, source.bwriter)
 		}
 	}
 	source.bwriter.Reset()
-	if err := source.tsparser.Parse(p, source.bwriter); err != nil {
+	//重新解析p.Data
+	if err := source.codecParser.Parse(p, source.bwriter); err != nil {
 		return compositionTime, false, err
 	}
 	p.Data = source.bwriter.Bytes()
@@ -125,9 +156,17 @@ func (source *Fmp4Source) parse(p *av.Packet) (cts int32, isSeq bool, err error)
 		source.cut()
 	}
 	return compositionTime, false, nil
-	return
 }
 
-func (s *Fmp4Source) cut() {
+func (source *Fmp4Source) cut() {
 
+}
+
+func (source *Fmp4Source) fmp4Mux(p *av.Packet) error {
+	if p.IsVideo {
+		return source.muxer.Mux(p, source.btswriter)
+	} else {
+		// source.cache.Cache(p.Data, source.pts)
+		// return source.muxAudio(cache_max_frames)
+	}
 }

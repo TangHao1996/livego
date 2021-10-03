@@ -3,8 +3,9 @@ package hls
 import (
 	"bytes"
 	"fmt"
-	"github.com/gwuhaolin/livego/configure"
 	"time"
+
+	"github.com/gwuhaolin/livego/configure"
 
 	"github.com/gwuhaolin/livego/av"
 	"github.com/gwuhaolin/livego/container/flv"
@@ -159,7 +160,7 @@ func (source *Source) SendPacket() error {
 			if source.btswriter != nil {
 				source.stat.update(p.IsVideo, p.TimeStamp)
 				source.calcPtsDts(p.IsVideo, p.TimeStamp, uint32(compositionTime))
-				source.tsMux(p)
+				source.tsMux(p) //add media data into btswriter
 			}
 		} else {
 			return fmt.Errorf("closed")
@@ -233,6 +234,7 @@ func (source *Source) parse(p *av.Packet) (int32, bool, error) {
 		}
 	}
 	source.bwriter.Reset()
+	// 把nalu存进p.Data
 	if err := source.tsparser.Parse(p, source.bwriter); err != nil {
 		return compositionTime, false, err
 	}
